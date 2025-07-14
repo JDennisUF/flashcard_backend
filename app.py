@@ -24,14 +24,13 @@ if not openai_api_key:
     logger.error("OpenAI API key not found in environment variables")
     raise ValueError("OpenAI API key is required")
 
-# Create OpenAI client
+# Create OpenAI client - simplified initialization
 try:
     openai_client = OpenAI(api_key=openai_api_key)
+    logger.info("OpenAI client initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize OpenAI client: {e}")
-    # Fallback for compatibility issues
-    os.environ['OPENAI_API_KEY'] = openai_api_key
-    openai_client = OpenAI()
+    raise RuntimeError(f"OpenAI client initialization failed: {e}")
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -95,7 +94,7 @@ def generate_flashcards():
         return jsonify({
             'success': True,
             'content': generated_content,
-            'model': model,
+            'model': response.model,  # Use response.model instead of the variable
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,
                 'completion_tokens': response.usage.completion_tokens,
@@ -138,6 +137,9 @@ def internal_error(error):
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     debug = os.getenv('FLASK_ENV') == 'development'
+    
+    logger.info(f"Starting Flask app on port {port}")
+    logger.info(f"Debug mode: {debug}")
     
     app.run(
         host='0.0.0.0',
