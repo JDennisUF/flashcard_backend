@@ -47,28 +47,61 @@ def generate_flashcards():
     try:
         # Validate request
         if not request.is_json:
-            return jsonify({'error': 'Request must be JSON'}), 400
+            return jsonify({'success': False, 'error': 'Request must be JSON'}), 400
         
         data = request.get_json()
         
-        # Validate required fields
-        if 'prompt' not in data:
-            return jsonify({'success': False, 'error': 'Prompt is required'}), 400
-        
-        prompt = data['prompt']
+        # Handle both simple prompt and messages format
+        if 'prompt' in data:
+            # Simple format: {"prompt": "text"}
+            prompt = data['prompt']
+        elif 'messages' in data and isinstance(data['messages'], list) and data['messages']:
+            # Messages format: {"messages": [{"role": "user", "content": "text"}]}
+            user_message = None
+            for msg in data['messages']:
+                if msg.get('role') == 'user':
+                    # Check for both 'content' and 'prompt' fields
+                    if 'content' in msg:
+                        user_message = msg['content']
+                    elif 'prompt' in msg:
+                        user_message = msg['prompt']
+                    break
+            
+            if not user_message:
+                return jsonify({'success': False, 'error': 'No user message found with content or prompt'}), 400
+            
+            prompt = user_message
+        else:
+            return jsonify({'success': False, 'error': 'Either prompt or messages are required'}), 400
         
         # Validate prompt is not empty
         if not prompt or not prompt.strip():
             return jsonify({'success': False, 'error': 'Prompt cannot be empty'}), 400
-        model = data.get('model', 'gpt-3.5-turbo')  # Default to GPT-3.5
+        
+        # Extract optional parameters with validation
+        model = data.get('model', 'gpt-3.5-turbo')
+        
+        # Validate model - only allow OpenAI models
+        valid_models = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo-preview', 'gpt-3.5-turbo-16k']
+        if model not in valid_models:
+            logger.warning(f"Invalid model requested: {model}, using gpt-3.5-turbo")
+            model = 'gpt-3.5-turbo'
+        
         max_tokens = data.get('max_tokens', 1000)
         temperature = data.get('temperature', 0.7)
         
+        # Validate parameters
+        if not isinstance(max_tokens, int) or max_tokens < 1 or max_tokens > 4000:
+            max_tokens = 1000
+        
+        if not isinstance(temperature, (int, float)) or temperature < 0 or temperature > 2:
+            temperature = 0.7
+        
         # Validate prompt length
         if len(prompt) > 4000:
-            return jsonify({'error': 'Prompt too long (max 4000 characters)'}), 400
+            return jsonify({'success': False, 'error': 'Prompt too long (max 4000 characters)'}), 400
         
-        logger.info(f"Generating flashcards with model: {model}")
+        logger.info(f"Generating flashcards with model: {model}, prompt length: {len(prompt)}")
         
         # Make request to OpenAI using new client
         response = openai_client.chat.completions.create(
@@ -90,11 +123,13 @@ def generate_flashcards():
         # Extract response content
         generated_content = response.choices[0].message.content
         
+        logger.info(f"Successfully generated {len(generated_content)} characters of content")
+        
         # Return successful response
         return jsonify({
             'success': True,
             'content': generated_content,
-            'model': response.model,  # Use response.model instead of the variable
+            'model': response.model,
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,
                 'completion_tokens': response.usage.completion_tokens,
@@ -104,23 +139,23 @@ def generate_flashcards():
         
     except RateLimitError:
         logger.error("OpenAI rate limit exceeded")
-        return jsonify({'error': 'Rate limit exceeded. Please try again later.'}), 429
+        return jsonify({'success': False, 'error': 'Rate limit exceeded. Please try again later.'}), 429
     
     except AuthenticationError:
         logger.error("OpenAI authentication failed")
-        return jsonify({'error': 'Authentication failed'}), 401
+        return jsonify({'success': False, 'error': 'Authentication failed'}), 401
     
     except BadRequestError as e:
         logger.error(f"Invalid OpenAI request: {str(e)}")
-        return jsonify({'error': 'Invalid request to OpenAI API'}), 400
+        return jsonify({'success': False, 'error': 'Invalid request to OpenAI API'}), 400
     
     except OpenAIError as e:
         logger.error(f"OpenAI API error: {str(e)}")
-        return jsonify({'error': 'OpenAI API error'}), 500
+        return jsonify({'success': False, 'error': 'OpenAI API error'}), 500
     
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 @app.errorhandler(404)
 def not_found(error):
