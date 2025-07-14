@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import openai
+from openai import OpenAI, RateLimitError, AuthenticationError, BadRequestError, OpenAIError
 from dotenv import load_dotenv
 import logging
 from datetime import datetime
@@ -18,11 +18,20 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
-openai.api_key = os.getenv('OPENAI_API_KEY')
+openai_api_key = os.getenv('OPENAI_API_KEY')
 
-if not openai.api_key:
+if not openai_api_key:
     logger.error("OpenAI API key not found in environment variables")
     raise ValueError("OpenAI API key is required")
+
+# Create OpenAI client
+try:
+    openai_client = OpenAI(api_key=openai_api_key)
+except Exception as e:
+    logger.error(f"Failed to initialize OpenAI client: {e}")
+    # Fallback for compatibility issues
+    os.environ['OPENAI_API_KEY'] = openai_api_key
+    openai_client = OpenAI()
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -45,9 +54,13 @@ def generate_flashcards():
         
         # Validate required fields
         if 'prompt' not in data:
-            return jsonify({'error': 'Prompt is required'}), 400
+            return jsonify({'success': False, 'error': 'Prompt is required'}), 400
         
         prompt = data['prompt']
+        
+        # Validate prompt is not empty
+        if not prompt or not prompt.strip():
+            return jsonify({'success': False, 'error': 'Prompt cannot be empty'}), 400
         model = data.get('model', 'gpt-3.5-turbo')  # Default to GPT-3.5
         max_tokens = data.get('max_tokens', 1000)
         temperature = data.get('temperature', 0.7)
@@ -58,8 +71,8 @@ def generate_flashcards():
         
         logger.info(f"Generating flashcards with model: {model}")
         
-        # Make request to OpenAI
-        response = openai.ChatCompletion.create(
+        # Make request to OpenAI using new client
+        response = openai_client.chat.completions.create(
             model=model,
             messages=[
                 {
@@ -90,19 +103,19 @@ def generate_flashcards():
             }
         })
         
-    except openai.error.RateLimitError:
+    except RateLimitError:
         logger.error("OpenAI rate limit exceeded")
         return jsonify({'error': 'Rate limit exceeded. Please try again later.'}), 429
     
-    except openai.error.InvalidRequestError as e:
-        logger.error(f"Invalid OpenAI request: {str(e)}")
-        return jsonify({'error': 'Invalid request to OpenAI API'}), 400
-    
-    except openai.error.AuthenticationError:
+    except AuthenticationError:
         logger.error("OpenAI authentication failed")
         return jsonify({'error': 'Authentication failed'}), 401
     
-    except openai.error.OpenAIError as e:
+    except BadRequestError as e:
+        logger.error(f"Invalid OpenAI request: {str(e)}")
+        return jsonify({'error': 'Invalid request to OpenAI API'}), 400
+    
+    except OpenAIError as e:
         logger.error(f"OpenAI API error: {str(e)}")
         return jsonify({'error': 'OpenAI API error'}), 500
     
